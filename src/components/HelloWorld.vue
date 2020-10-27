@@ -1,40 +1,125 @@
 <template>
   <div class="hello">
-    <h1>{{ msg }}</h1>
-    <p>
-      For a guide and recipes on how to configure / customize this project,<br>
-      check out the
-      <a href="https://cli.vuejs.org" target="_blank" rel="noopener">vue-cli documentation</a>.
-    </p>
-    <h3>Installed CLI Plugins</h3>
-    <ul>
-      <li><a href="https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-babel" target="_blank" rel="noopener">babel</a></li>
-      <li><a href="https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-eslint" target="_blank" rel="noopener">eslint</a></li>
-    </ul>
-    <h3>Essential Links</h3>
-    <ul>
-      <li><a href="https://vuejs.org" target="_blank" rel="noopener">Core Docs</a></li>
-      <li><a href="https://forum.vuejs.org" target="_blank" rel="noopener">Forum</a></li>
-      <li><a href="https://chat.vuejs.org" target="_blank" rel="noopener">Community Chat</a></li>
-      <li><a href="https://twitter.com/vuejs" target="_blank" rel="noopener">Twitter</a></li>
-      <li><a href="https://news.vuejs.org" target="_blank" rel="noopener">News</a></li>
-    </ul>
-    <h3>Ecosystem</h3>
-    <ul>
-      <li><a href="https://router.vuejs.org" target="_blank" rel="noopener">vue-router</a></li>
-      <li><a href="https://vuex.vuejs.org" target="_blank" rel="noopener">vuex</a></li>
-      <li><a href="https://github.com/vuejs/vue-devtools#vue-devtools" target="_blank" rel="noopener">vue-devtools</a></li>
-      <li><a href="https://vue-loader.vuejs.org" target="_blank" rel="noopener">vue-loader</a></li>
-      <li><a href="https://github.com/vuejs/awesome-vue" target="_blank" rel="noopener">awesome-vue</a></li>
-    </ul>
+    <h2 v-if="loading">loading...</h2>
+    <div v-if="!loading">
+      <h3>mDai Balance {{ mDaiBalance | tokens }}mDai</h3>
+      <h3>Staking Balance {{ stakingBalance | tokens }}mDai</h3>
+      <h3>Reward {{ dappTokenBalance | tokens }}DApp</h3>
+      <h3>
+        <form @submit.prevent="stakeTokens">
+          <p>
+            <input type="number" v-model="amount">
+            mDai
+          </p>
+          <p>
+            <button type="submit">STAKE</button>
+          </p>
+          <p>
+            <button @click="unstakeTokens">UNSTAKE</button>
+          </p>
+        </form>
+      </h3>
+    </div>
   </div>
 </template>
 
 <script>
+import Web3 from "web3";
+import mDai from "../../build/contracts/DaiToken.json"
+import DAppToken from "../../build/contracts/DappToken.json"
+import TokenFarm from "../../build/contracts/TokenFarm.json"
+
+let web3;
+
 export default {
   name: 'HelloWorld',
-  props: {
-    msg: String
+  data() {
+    return {
+      account: "",
+      mDaiToken: {},
+      mDaiBalance: 0,
+      dappToken: {},
+      dappTokenBalance: 0,
+      tokenFarm: {},
+      stakingBalance: 0,
+      amount: 0,
+      loading: true
+    }
+  },
+  filters: {
+    tokens(v) {
+      return window.web3.utils.fromWei(v, "ether");
+    }
+  },
+  methods: {
+    async loadWeb3() {
+      if (window.ethereum) {
+        window.web3 = new Web3(window.ethereum);
+        await window.ethereum.enable();
+      }
+      else if (window.web3) {
+        window.web3 = new Web3(window.web3.currentProvider);
+      }
+      else {
+        window.alert("Non-ethereum browser detected");
+      }
+    },
+    async loadBlockchainData() {
+      web3 = window.web3;
+
+      const accounts = await web3.eth.getAccounts();
+      this.account = accounts[0];
+
+      const networkId = await web3.eth.net.getId();
+      // mDaiトークン読み込み
+      const mDaiData = mDai.networks[networkId];
+      if(mDaiData) {
+        const mDaiToken = new web3.eth.Contract(mDai.abi, mDaiData.address);
+        this.mDaiToken = mDaiToken;
+        this.mDaiBalance = await mDaiToken.methods.balanceOf(this.account).call();
+      } else {
+        window.alert("mDai contract not deployed to detected network.");
+      }
+      // DAppトークン読み込み
+      const dappTokenData = DAppToken.networks[networkId];
+      if(dappTokenData) {
+        const dappToken = new web3.eth.Contract(DAppToken.abi, dappTokenData.address);
+        this.dappToken = dappToken;
+        this.dappTokenBalance = await dappToken.methods.balanceOf(this.account).call();
+      } else {
+        window.alert("DApp Token contract not deployed to detected network.");
+      }
+      // TokenFarmトークン読み込み
+      const tokenFarmData = TokenFarm.networks[networkId];
+      if(tokenFarmData) {
+        const tokenFarm = new web3.eth.Contract(TokenFarm.abi, tokenFarmData.address);
+        this.tokenFarm = tokenFarm;
+        this.stakingBalance = await tokenFarm.methods.stakingBalance(this.account).call();
+      } else {
+        window.alert("TokenFarm contract not deployed to detected network.");
+      }
+    },
+    async stakeTokens() {
+      this.loading = true;
+      const amount = window.web3.utils.toWei(this.amount, "ether");
+      await this.mDaiToken.methods.approve(this.tokenFarm._address, amount).send({ from: this.account })
+      .on("transactionHash", async () => {
+        await this.tokenFarm.methods.stakeTokens(amount).send({ from: this.account });
+        this.loading = false;
+      })
+    },
+    async unstakeTokens() {
+      this.loading = true;
+      await this.tokenFarm.methods.unstakeTokens().send({ from: this.account })
+      .on("transactionHash", async () => {
+        this.loading = false;
+      })
+    }
+  },
+  async created() {
+    await this.loadWeb3();
+    await this.loadBlockchainData();
+    this.loading = false;
   }
 }
 </script>
@@ -51,7 +136,7 @@ ul {
 li {
   display: inline-block;
   margin: 0 10px;
-}
+} 
 a {
   color: #42b983;
 }
